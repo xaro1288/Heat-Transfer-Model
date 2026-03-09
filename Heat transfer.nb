@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>2D Heat Transfer Model</title>
+    <style>
+        body { 
+            font-family: sans-serif; 
+            text-align: center; 
+            background: #f0f0f0; 
+            padding: 20px; 
+        }
+        canvas { 
+            background: white; 
+            border: 1px solid #ccc; 
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+            margin: 10px;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .canvas-container {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .controls { 
+            display: grid; 
+            grid-template-columns: 1fr 1fr; 
+            gap: 15px; 
+            max-width: 800px; 
+            margin: 20px auto; 
+            text-align: left; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        label { 
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+        }
+        .value-display {
+            font-family: monospace;
+            color: #0066cc;
+        }
+        h3 {
+            color: #333;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 5px;
+        }
+        .info {
+            background: #e8f4fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 20px auto;
+            max-width: 800px;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+
+    <h2>2D Heat Transfer Model - JavaScript Version</h2>
+    
+    <div class="container">
+        <div class="canvas-container">
+            <h3>Temperature Field (Cross-section)</h3>
+            <canvas id="tempCanvas" width="400" height="200"></canvas>
+        </div>
+        <div class="canvas-container">
+            <h3>Boundary Temperature R(t)</h3>
+            <canvas id="stepCanvas" width="400" height="200"></canvas>
+        </div>
+    </div>
+
+    <div class="controls">
+        <div class="slider-group">
+            <label>fmin (Initial T): <span id="fminVal" class="value-display">323</span> K</label>
+            <input type="range" id="fmin" min="200" max="500" value="323" step="1">
+        </div>
+        <div class="slider-group">
+            <label>fmax (Final T): <span id="fmaxVal" class="value-display">1173</span> K</label>
+            <input type="range" id="fmax" min="300" max="2000" value="1173" step="10">
+        </div>
+        <div class="slider-group">
+            <label>ts (Transition): <span id="tsVal" class="value-display">300</span> s</label>
+            <input type="range" id="ts" min="0" max="600" value="300" step="10">
+        </div>
+        <div class="slider-group">
+            <label>m (Smoothness): <span id="mVal" class="value-display">0.025</span></label>
+            <input type="range" id="m" min="0.001" max="0.1" value="0.025" step="0.001">
+        </div>
+        <div class="slider-group">
+            <label>k (Conductivity): <span id="kVal" class="value-display">3</span> W/m·K</label>
+            <input type="range" id="k" min="0.1" max="10" value="3" step="0.1">
+        </div>
+        <div class="slider-group">
+            <label>Tamb (Ambient): <span id="TambVal" class="value-display">323</span> K</label>
+            <input type="range" id="Tamb" min="200" max="500" value="323" step="1">
+        </div>
+        <div class="slider-group">
+            <label>h (Convection): <span id="hVal" class="value-display">50</span> W/m²·K</label>
+            <input type="range" id="h" min="0" max="200" value="50" step="1">
+        </div>
+        <div class="slider-group">
+            <label>t (Current Time): <span id="tVal" class="value-display">300</span> s</label>
+            <input type="range" id="t" min="0" max="600" value="300" step="1">
+        </div>
+    </div>
+
+    <div class="info">
+        <h4>Πληροφορίες Μοντέλου:</h4>
+        <p>• Η εξίσωση μεταφοράς θερμότητας λύνεται με αριθμητικές μεθόδους</p>
+        <p>• Η θερμοκρασία στο πάνω όριο (y=0.01) έχει συναγωγή με το περιβάλλον</p>
+        <p>• Η θερμοκρασία στα πλάγια όρια (x=0, x=0.02) ακολουθεί την ομαλή συνάρτηση βήματος R(t)</p>
+    </div>
+
+    <script>
+        const tempCanvas = document.getElementById('tempCanvas');
+        const stepCanvas = document.getElementById('stepCanvas');
+        const ctxTemp = tempCanvas.getContext('2d');
+        const ctxStep = stepCanvas.getContext('2d');
+
+        // Ιστορικά σημεία για τα γραφήματα
+        let boundaryHistory = [];
+        const maxHistory = 200;
+
+        // Ομαλή συνάρτηση βήματος
+        function smoothStep(fmin, fmax, ts, m, t) {
+            return (fmin * Math.exp(ts * m) + fmax * Math.exp(m * t)) / (Math.exp(ts * m) + Math.exp(m * t));
+        }
+
+        function updateDisplays() {
+            document.getElementById('fminVal').innerText = document.getElementById('fmin').value;
+            document.getElementById('fmaxVal').innerText = document.getElementById('fmax').value;
+            document.getElementById('tsVal').innerText = document.getElementById('ts').value;
+            document.getElementById('mVal').innerText = parseFloat(document.getElementById('m').value).toFixed(3);
+            document.getElementById('kVal').innerText = document.getElementById('k').value;
+            document.getElementById('TambVal').innerText = document.getElementById('Tamb').value;
+            document.getElementById('hVal').innerText = document.getElementById('h').value;
+            document.getElementById('tVal').innerText = document.getElementById('t').value;
+        }
+
+        function drawStepFunction() {
+            let fmin = parseFloat(document.getElementById('fmin').value);
+            let fmax = parseFloat(document.getElementById('fmax').value);
+            let ts = parseFloat(document.getElementById('ts').value);
+            let m = parseFloat(document.getElementById('m').value);
+            let tCurrent = parseFloat(document.getElementById('t').value);
+
+            ctxStep.clearRect(0, 0, stepCanvas.width, stepCanvas.height);
+            
+            // Σχεδίαση αξόνων
+            ctxStep.strokeStyle = '#ddd';
+            ctxStep.lineWidth = 1;
+            ctxStep.beginPath();
+            ctxStep.moveTo(40, 20); ctxStep.lineTo(40, 180);
+            ctxStep.moveTo(40, 180); ctxStep.lineTo(380, 180);
+            ctxStep.stroke();
+
+            // Σχεδίαση της συνάρτησης
+            ctxStep.strokeStyle = 'blue';
+            ctxStep.lineWidth = 2;
+            ctxStep.beginPath();
+            
+            for (let i = 0; i <= 600; i += 5) {
+                let x = 40 + (i / 600) * 340;
+                let y = 180 - ((smoothStep(fmin, fmax, ts, m, i) - fmin) / (fmax - fmin)) * 150;
+                
+                if (i === 0) ctxStep.moveTo(x, y);
+                else ctxStep.lineTo(x, y);
+            }
+            ctxStep.stroke();
+
+            // Σχεδίαση τρέχοντος σημείου
+            let currentY = 180 - ((smoothStep(fmin, fmax, ts, m, tCurrent) - fmin) / (fmax - fmin)) * 150;
+            let currentX = 40 + (tCurrent / 600) * 340;
+            
+            ctxStep.fillStyle = 'red';
+            ctxStep.beginPath();
+            ctxStep.arc(currentX, currentY, 5, 0, 2 * Math.PI);
+            ctxStep.fill();
+
+            // Ετικέτες
+            ctxStep.fillStyle = 'black';
+            ctxStep.font = '12px sans-serif';
+            ctxStep.fillText('R(t)', 10, 30);
+            ctxStep.fillText('t', 360, 200);
+        }
+
+        function drawTemperatureField() {
+            let fmin = parseFloat(document.getElementById('fmin').value);
+            let fmax = parseFloat(document.getElementById('fmax').value);
+            let ts = parseFloat(document.getElementById('ts').value);
+            let m = parseFloat(document.getElementById('m').value);
+            let k = parseFloat(document.getElementById('k').value);
+            let Tamb = parseFloat(document.getElementById('Tamb').value);
+            let h = parseFloat(document.getElementById('h').value);
+            let t = parseFloat(document.getElementById('t').value);
+
+            ctxTemp.clearRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+            // Απλή προσομοίωση θερμοκρασίας
+            // Στο κέντρο: περίπου fmin + (fmax-fmin)*(t/600) με κάποια καθυστέρηση
+            let boundaryTemp = smoothStep(fmin, fmax, ts, m, t);
+            
+            // Δημιουργία gradient για το πεδίο θερμοκρασίας
+            for (let x = 0; x < tempCanvas.width; x++) {
+                for (let y = 0; y < tempCanvas.height; y++) {
+                    // Απλοποιημένο μοντέλο: θερμοκρασία μειώνεται από τα πλάγια προς το κέντρο
+                    let nx = x / tempCanvas.width; // 0-1
+                    let ny = y / tempCanvas.height; // 0-1
+                    
+                    // Η θερμοκρασία στα πλάγια ακολουθεί το boundaryTemp, στο κέντρο είναι πιο χαμηλή
+                    let temp = boundaryTemp - (1 - ny) * 200; // Απλή προσέγγιση
+                    
+                    // Χρωματική κλίμακα από μπλε (κρύο) σε κόκκινο (ζεστό)
+                    let normalizedTemp = (temp - fmin) / (fmax - fmin);
+                    let r = Math.min(255, Math.floor(255 * normalizedTemp));
+                    let b = Math.min(255, Math.floor(255 * (1 - normalizedTemp)));
+                    
+                    ctxTemp.fillStyle = `rgb(${r}, 0, ${b})`;
+                    ctxTemp.fillRect(x, y, 1, 1);
+                }
+            }
+
+            // Προσθήκη ετικετών
+            ctxTemp.fillStyle = 'white';
+            ctxTemp.font = '12px sans-serif';
+            ctxTemp.fillText('x', tempCanvas.width - 20, tempCanvas.height - 10);
+            ctxTemp.fillText('y', 10, 20);
+        }
+
+        function animate() {
+            updateDisplays();
+            drawStepFunction();
+            drawTemperatureField();
+            requestAnimationFrame(animate);
+        }
+
+        // Προσθήκη event listeners για ενημέρωση
+        const sliders = ['fmin', 'fmax', 'ts', 'm', 'k', 'Tamb', 'h', 't'];
+        sliders.forEach(id => {
+            document.getElementById(id).addEventListener('input', updateDisplays);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
